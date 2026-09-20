@@ -23,9 +23,14 @@ import { getWebSearchConfigPath } from "./utils.ts";
 // cost the user their search. Responses API inline citations are enabled by
 // default; sources may also come back in a search call's `action.sources`.
 
-const XAI_RESPONSES_URL = "https://api.x.ai/v1/responses";
+// Overridable so a relay that re-exposes xAI's Agent Tools API under its own
+// OpenAI-compatible /responses endpoint can answer for the same backend.
+const DEFAULT_XAI_RESPONSES_URL = "https://api.x.ai/v1/responses";
 const CONFIG_PATH = getWebSearchConfigPath();
-const SEARCH_TIMEOUT_MS = 60_000;
+// A Grok web_search request fans out to roughly a dozen searches inside xAI's
+// inference; a live account measured 60-115 s, so the old 60 s budget cut it off.
+const DEFAULT_SEARCH_TIMEOUT_MS = 300_000;
+const MAX_SEARCH_TIMEOUT_MS = 600_000;
 
 // Ordered best-first. pi's builtin xai catalog is small and xAI retires models
 // briskly, so this is a preference list, not an assumption: the first one the
@@ -42,6 +47,8 @@ interface WebSearchConfig {
 	xaiApiKey?: unknown;
 	xaiSearchModel?: unknown;
 	xaiSearchTools?: unknown;
+	xaiResponsesUrl?: unknown;
+	xaiSearchTimeoutSeconds?: unknown;
 }
 
 type ProviderHeaders = Record<string, string | null>;
@@ -77,6 +84,27 @@ function resolveConfiguredSearchModel(value: unknown): string | undefined {
 		throw new Error(`xaiSearchModel in ${CONFIG_PATH} must be a non-empty string`);
 	}
 	return value.trim();
+}
+
+function resolveResponsesUrl(value: unknown): string {
+	if (value === undefined) return DEFAULT_XAI_RESPONSES_URL;
+	let url: URL;
+	try {
+		if (typeof value !== "string" || !value.trim()) throw new Error();
+		url = new URL(value.trim());
+		if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error();
+	} catch {
+		throw new Error(`xaiResponsesUrl in ${CONFIG_PATH} must be an absolute http(s) URL`);
+	}
+	return url.toString();
+}
+
+function resolveSearchTimeoutMs(value: unknown): number {
+	if (value === undefined) return DEFAULT_SEARCH_TIMEOUT_MS;
+	if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+		throw new Error(`xaiSearchTimeoutSeconds in ${CONFIG_PATH} must be a positive number of seconds`);
+	}
+	return Math.min(Math.round(value * 1000), MAX_SEARCH_TIMEOUT_MS);
 }
 
 function resolveConfiguredSearchTools(value: unknown): XaiSearchTool[] {
@@ -164,6 +192,8 @@ export async function isXaiSearchAvailable(ctx?: ExtensionContext): Promise<bool
 	try {
 		config = loadConfig();
 		tools = resolveConfiguredSearchTools(config.xaiSearchTools);
+		resolveResponsesUrl(config.xaiResponsesUrl);
+		resolveSearchTimeoutMs(config.xaiSearchTimeoutSeconds);
 	} catch {
 		return false;
 	}
@@ -330,7 +360,10 @@ export async function searchWithXai(
 	options: SearchOptions = {},
 	ctx?: ExtensionContext,
 ): Promise<SearchResponse> {
-	const tools = resolveConfiguredSearchTools(loadConfig().xaiSearchTools);
+	const config = loadConfig();
+	const tools = resolveConfiguredSearchTools(config.xaiSearchTools);
+	const responsesUrl = resolveResponsesUrl(config.xaiResponsesUrl);
+	const timeoutMs = resolveSearchTimeoutMs(config.xaiSearchTimeoutSeconds);
 	const auth = await resolveXaiAuth(ctx, options.signal);
 	if (!auth) {
 		throw new Error(
@@ -343,7 +376,7 @@ export async function searchWithXai(
 
 	const activityId = activityMonitor.logStart({ type: "api", query });
 	try {
-		const response = await fetch(XAI_RESPONSES_URL, {
+		const response = await fetch(responsesUrl, {
 			method: "POST",
 			headers: {
 				...toRequestHeaders(auth.headers),
@@ -356,8 +389,8 @@ export async function searchWithXai(
 				tools: tools.map((type) => ({ type })),
 			}),
 			signal: options.signal
-				? AbortSignal.any([AbortSignal.timeout(SEARCH_TIMEOUT_MS), options.signal])
-				: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+				? AbortSignal.any([AbortSignal.timeout(timeoutMs), options.signal])
+				: AbortSignal.timeout(timeoutMs),
 		});
 
 		if (!response.ok) {

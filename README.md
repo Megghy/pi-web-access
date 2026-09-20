@@ -444,8 +444,10 @@ Config defaults to `~/.pi/agent/web-search.json` when neither `PI_CODING_AGENT_D
   "serplyApiKey": "$SERPLY_API_KEY",
   "brightdataApiKey": "$BRIGHTDATA_API_KEY",
   "brightdataSerpZone": "pi_serp",
-  "xaiApiKey": "xai-...",
-  "xaiSearchTools": ["web_search"],
+    "xaiApiKey": "xai-...",
+    "xaiSearchTools": ["web_search"],
+    "xaiResponsesUrl": "https://gateway.example.com/v1/responses",
+    "xaiSearchTimeoutSeconds": 300,
   "mistralApiKey": "$MISTRAL_API_KEY",
   "mistralSearchModel": "mistral-small-latest",
   "mistralSearchTool": "web_search",
@@ -748,6 +750,10 @@ Requests send only `{ model, input, tools }`, the shape verified against a live 
 The value must be a non-empty array containing each of `web_search` and `x_search` at most once. This intentionally does not expose per-call X handle, date, or media-understanding parameters until their request contract is stable. `recencyFilter`, `domainFilter`, and `numResults` remain prompt guidance rather than tool parameters, so an unrecognized field cannot turn a search into a 400. Sources are read in annotation-first order from `url_citation` annotations, raw `web_search_call`/`x_search_call` source lists when present, and xAI's response-level `citations` URL list.
 
 xAI's older Live Search (`search_parameters` on `/v1/chat/completions`) is deprecated and now answers HTTP 410.
+
+Set `xaiResponsesUrl` when a gateway or relay re-exposes xAI's Agent Tools API under its own OpenAI-compatible Responses endpoint. The request body, the `{ model, input, tools }` shape, and result parsing stay identical, so `xaiApiKey` and `xaiSearchModel` apply unchanged and no SuperGrok subscription is involved. An invalid value marks xAI unavailable rather than silently falling back to the official endpoint.
+
+`xaiSearchTimeoutSeconds` bounds one Grok search and defaults to `300`. A single question fans out to roughly a dozen hosted `web_search` calls inside xAI's inference, which a live account measured at 60-115 s, so the shared 60 s search budget used to cut most Grok searches off mid-flight. The value must be a positive number of seconds and is capped at `600`.
 
 ### Mistral Conversations
 

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added `xaiResponsesUrl` for pointing xAI/Grok search at a gateway or relay that re-exposes xAI's Agent Tools API on its own OpenAI-compatible Responses endpoint, so `xaiApiKey` and `xaiSearchModel` work without a SuperGrok subscription.
+- Added `xaiSearchTimeoutSeconds` (default `300`, capped at `600`) for how long one Grok search may run. Grok's hosted `web_search` fans a question out to roughly a dozen searches inside xAI's inference and measured 60-115 s against a live account, so the shared 60 s search budget aborted most Grok searches.
+
 ## [0.30.0] - 2026-09-19
 
 ### Highlights
